@@ -16,10 +16,12 @@ import { VoiceModule } from './voice/voice.module';
 import { MemoryModule } from './memory/memory.module';
 import { ConceptModule } from './concept/concept.module';
 import { HintModule } from './hint/hint.module';
+import { HealthModule } from './health/health.module';
 import { env } from './config/env';
 
 @Module({
   imports: [
+    HealthModule,
     PrismaModule,
     JwtModule.register({
       global: true,

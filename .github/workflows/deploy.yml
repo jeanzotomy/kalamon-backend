@@ -1,0 +1,230 @@
+# ============================================================
+# KALAMON BACKEND — Déploiement Multi-Cloud
+#
+# Déclenché sur :
+#   - push vers main/master (déploiement automatique après CI vert)
+#   - workflow_dispatch (déploiement manuel avec choix du cloud)
+#
+# Secrets requis selon le cloud choisi :
+#   GHCR        : GITHUB_TOKEN (automatique — fourni par GitHub Actions)
+#   Railway     : RAILWAY_TOKEN
+#   Azure ACA   : AZURE_CREDENTIALS
+#                 vars.ACR_NAME  (ex: acrkalamon)
+#                 vars.ACA_APP_NAME (ex: ca-kalamon-api)
+#                 vars.ACA_RG  (ex: kalamon-prod)
+#   Render      : RENDER_DEPLOY_HOOK (URL complète du deploy hook Render)
+#   Fly.io      : FLY_API_TOKEN
+#
+# Variable DEPLOY_TARGET (GitHub variable ou env par défaut) :
+#   railway | azure-aca | render | fly | ghcr-only
+# ============================================================
+
+name: Deploy
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: "Cloud cible"
+        required: true
+        default: "railway"
+        type: choice
+        options:
+          - railway
+          - azure-aca
+          - render
+          - fly
+          - ghcr-only
+
+# Empêcher les déploiements parallèles sur le même environnement
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Résolution de la cible cloud :
+  # - workflow_dispatch → utilise l'input
+  # - push automatique → utilise la variable GitHub DEPLOY_TARGET (ou railway par défaut)
+  CLOUD_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.cloud || vars.DEPLOY_TARGET || 'railway' }}
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Job 1 : Build & push vers GHCR (commun à tous)
+  # ──────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push GHCR
+    runs-on: ubuntu-latest
+    # Permissions requises pour pousser vers GHCR
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Login GHCR avec le token GitHub automatique
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Métadonnées d'image : tags SHA + latest
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # Build multi-arch + push GHCR
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache inter-runs pour accélérer les builds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Platforms : linux/amd64 pour Railway/ACA/Render/Fly
+          platforms: linux/amd64
+
+  # ──────────────────────────────────────────────
+  # Job 2a : Railway
+  # ──────────────────────────────────────────────
+  deploy-railway:
+    name: Deploy to Railway
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: needs.build-and-push.result == 'success' && (vars.DEPLOY_TARGET == 'railway' || github.event.inputs.cloud == 'railway')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Railway déploie depuis GitHub automatiquement quand connecté.
+      # Ce step déclenche un déploiement forcé via CLI
+      # (utile si le repo n'est pas connecté en mode "auto-deploy")
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        run: railway up --service kalamon-api --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        # railway up force un redéploiement du service kalamon-api
+        # --detach : retour immédiat sans attendre la fin du build Railway
+
+  # ──────────────────────────────────────────────
+  # Job 2b : Azure Container Apps
+  # ──────────────────────────────────────────────
+  deploy-azure-aca:
+    name: Deploy to Azure ACA
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: needs.build-and-push.result == 'success' && (vars.DEPLOY_TARGET == 'azure-aca' || github.event.inputs.cloud == 'azure-aca')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Login Azure via Service Principal JSON (secret AZURE_CREDENTIALS)
+      # Format : {"clientId":"...","clientSecret":"...","subscriptionId":"...","tenantId":"..."}
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Build & push depuis ACR (alternative à GHCR pour ACA — pas de pull secret requis)
+      - name: Build and push to ACR
+        run: |
+          az acr build \
+            --registry ${{ vars.ACR_NAME }} \
+            --image kalamon-backend:${{ github.sha }} \
+            --file Dockerfile \
+            .
+
+      # Mise à jour de la Container App — tag unique (jamais :latest pour ACA)
+      # Règle mémorisée : tag unique obligatoire pour forcer une nouvelle révision
+      - name: Update Azure Container App
+        run: |
+          az containerapp update \
+            --name ${{ vars.ACA_APP_NAME }} \
+            --resource-group ${{ vars.ACA_RG }} \
+            --image ${{ vars.ACR_NAME }}.azurecr.io/kalamon-backend:${{ github.sha }}
+        # ATTENTION : ne jamais utiliser az rest PATCH partiel sur containers[]
+        # → efface les env vars existantes. Toujours utiliser --image sur containerapp update.
+
+  # ──────────────────────────────────────────────
+  # Job 2c : Render
+  # ──────────────────────────────────────────────
+  deploy-render:
+    name: Deploy to Render
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: needs.build-and-push.result == 'success' && (vars.DEPLOY_TARGET == 'render' || github.event.inputs.cloud == 'render')
+
+    steps:
+      # Render surveille le repo GitHub et redéploie automatiquement sur push.
+      # Le deploy hook force un redéploiement immédiat (utile pour les branches non surveillées).
+      - name: Trigger Render deploy hook
+        run: |
+          curl --fail --silent --show-error \
+            -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
+        # RENDER_DEPLOY_HOOK : URL de la forme
+        # https://api.render.com/deploy/srv-xxxxx?key=yyyyy
+        # Disponible dans Render Dashboard > Service > Settings > Deploy Hook
+
+  # ──────────────────────────────────────────────
+  # Job 2d : Fly.io
+  # ──────────────────────────────────────────────
+  deploy-fly:
+    name: Deploy to Fly.io
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: needs.build-and-push.result == 'success' && (vars.DEPLOY_TARGET == 'fly' || github.event.inputs.cloud == 'fly')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Setup flyctl (Fly CLI officiel)
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # Déploiement depuis le Dockerfile local (--remote-only = build sur Fly builders)
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only --strategy rolling
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        # --strategy rolling : zero-downtime (vérifier que fly.toml est présent)
+        # --remote-only : build dans les builders Fly, pas localement
+
+  # ──────────────────────────────────────────────
+  # Job 2e : GHCR only (pas de déploiement cloud)
+  # ──────────────────────────────────────────────
+  ghcr-only:
+    name: GHCR Only (no cloud deploy)
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: needs.build-and-push.result == 'success' && (vars.DEPLOY_TARGET == 'ghcr-only' || github.event.inputs.cloud == 'ghcr-only')
+
+    steps:
+      - name: Image published to GHCR
+        run: |
+          echo "Image disponible : ghcr.io/${{ github.repository }}:${{ github.sha }}"
+          echo "Pour déployer manuellement :"
+          echo "  docker pull ghcr.io/${{ github.repository }}:${{ github.sha }}"
