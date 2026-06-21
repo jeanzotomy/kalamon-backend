@@ -1,17 +1,11 @@
 import { Module } from '@nestjs/common';
 import { MemoryService } from './memory.service';
-import { KalamonModule } from '../kalamon/kalamon.module';
+import { AiProviderService } from '../kalamon/ai-provider.service';
 
-// PrismaService est fourni globalement via PrismaModule (@Global) — pas besoin de l'importer.
-//
-// AiProviderService est déclaré dans KalamonModule. Ce module doit l'exporter
-// pour que MemoryModule puisse l'injecter dans MemoryService.
-// Si KalamonModule n'exporte pas AiProviderService, ajouter exports: [AiProviderService]
-// dans kalamon.module.ts (voir note ci-dessous).
-
+// AiProviderService n'a aucune dépendance injectée (lit env directement) — on peut
+// le fournir directement ici pour éviter une dépendance circulaire avec KalamonModule.
 @Module({
-  imports: [KalamonModule],
-  providers: [MemoryService],
+  providers: [MemoryService, AiProviderService],
   exports: [MemoryService],
 })
 export class MemoryModule {}

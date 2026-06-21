@@ -5,6 +5,8 @@ import { AiProviderService } from './ai-provider.service';
 import { ChatInput, ChatResult, ComplexityLevel } from './dto/chat.dto';
 import { env } from '../config/env';
 import { BktService } from '../bkt/bkt.service';
+import { MemoryService } from '../memory/memory.service';
+import { HintService } from '../hint/hint.service';
 
 /**
  * Orchestration RAG ancrée + cache sémantique + budget + audit + BKT.
@@ -51,6 +53,8 @@ export class RagService {
     private readonly prisma: PrismaService,
     private readonly ai: AiProviderService,
     private readonly bktService: BktService,
+    private readonly memoryService: MemoryService,
+    private readonly hintService: HintService,
   ) {}
 
   async chat(organizationId: string, input: ChatInput): Promise<ChatResult> {
@@ -61,13 +65,41 @@ export class RagService {
 
     await this.enforceDailyBudget(organizationId, eleve.id);
 
+    // Matière déduite du skillCode ("math:fractions" → "math") ou "general"
+    const matiere = input.skillCode?.split(':')[0] ?? 'general';
+    const surface = input.skillCode ?? `${matiere}:${eleve.niveau}`;
+
     // Sélection de la complexité : explicite > détectée depuis le niveau
     const complexite: ComplexityLevel =
       input.complexite ?? detectComplexite(eleve.niveau);
     const complexiteHint = COMPLEXITE_PROMPTS[complexite];
 
+    // (1b) Contexte mémoire L2/L3 — injecté dans le prompt, fire-and-forget si erreur
+    const memoryContext = await this.memoryService
+      .getContextForRag(eleve.id, surface)
+      .catch(() => '');
+
     const qVec = await this.ai.embed(input.question);
     const vecLiteral = this.toVector(qVec);
+
+    // (Hint) : si l'élève demande un indice, générer sans passer par le pipeline RAG complet
+    if (input.demandeIndice) {
+      const niveauIndice = (input.niveauIndice ?? 1) as 1 | 2 | 3;
+      const chunks = await this.searchChunks(organizationId, eleve.niveau, vecLiteral);
+      const curriculumContext = chunks.map((c) => c.contenu).join('\n\n');
+      const hint = await this.hintService.generateHint({
+        question: input.question,
+        matiere,
+        curriculumContext,
+        niveauIndice,
+        eleveNiveau: eleve.niveau,
+      });
+      // Trace L1 (non bloquant)
+      this.memoryService
+        .appendTrace({ organizationId, eleveId: eleve.id, surface, question: input.question, reponse: hint, skillCode: input.skillCode, difficulty: 'LOW' })
+        .catch(() => undefined);
+      return { reponse: hint, source: 'HINT', sourceChunkIds: chunks.map((c) => c.id), complexite };
+    }
 
     // (2) Cache sémantique
     const cached = await this.searchCache(organizationId, eleve.niveau, vecLiteral);
@@ -76,85 +108,40 @@ export class RagService {
         where: { id: cached.id },
         data: { hits: { increment: 1 } },
       });
-      await this.audit(
-        organizationId,
-        eleve.id,
-        input.question,
-        cached.reponse,
-        'CACHE',
-        cached.sourceChunkIds,
-        null,
-        0,
-        0,
-        0,
-      );
+      await this.audit(organizationId, eleve.id, input.question, cached.reponse, 'CACHE', cached.sourceChunkIds, null, 0, 0, 0);
 
-      // Mise à jour BKT sur cache hit : l'élève a déjà obtenu cette réponse (confirmée)
-      const bktUpdate = await this.maybeUpdateBkt(
-        organizationId,
-        eleve.id,
-        input.skillCode,
-        eleve.niveau,
-        true, // cache hit = réponse confirmée = isCorrect
-      );
+      const bktUpdate = await this.maybeUpdateBkt(organizationId, eleve.id, input.skillCode, matiere, true);
 
-      return {
-        reponse: cached.reponse,
-        source: 'CACHE',
-        sourceChunkIds: cached.sourceChunkIds,
-        complexite,
-        bktUpdate,
-      };
+      // Trace L1 (non bloquant)
+      this.memoryService
+        .appendTrace({ organizationId, eleveId: eleve.id, surface, question: input.question, reponse: cached.reponse, skillCode: input.skillCode, mastered: (bktUpdate?.probMastery ?? 0) >= 0.9, difficulty: 'LOW' })
+        .catch(() => undefined);
+
+      return { reponse: cached.reponse, source: 'CACHE', sourceChunkIds: cached.sourceChunkIds, complexite, bktUpdate };
     }
 
-    // (3) RAG_LIVE : récupérer les chunks de curriculum les plus proches
+    // (3) RAG_LIVE : chunks curriculum + contexte mémoire injecté
     const chunks = await this.searchChunks(organizationId, eleve.niveau, vecLiteral);
-    const gen = await this.ai.generateGrounded(
-      input.question,
-      chunks.map((c) => c.contenu),
-      complexiteHint,
-    );
+    const contextChunks = chunks.map((c) => c.contenu);
+    // Injecter le résumé mémoire en tête du contexte si disponible
+    if (memoryContext) contextChunks.unshift(`[Mémoire élève]\n${memoryContext}`);
+
+    const gen = await this.ai.generateGrounded(input.question, contextChunks, complexiteHint);
     const cost = this.ai.estimateCost(gen.inputTokens, gen.outputTokens);
     const sourceChunkIds = chunks.map((c) => c.id);
 
     // (4) audit + cache
-    await this.audit(
-      organizationId,
-      eleve.id,
-      input.question,
-      gen.text,
-      'RAG_LIVE',
-      sourceChunkIds,
-      gen.model,
-      gen.inputTokens,
-      gen.outputTokens,
-      cost,
-    );
-    await this.storeCache(
-      organizationId,
-      eleve.niveau,
-      input.question,
-      gen.text,
-      sourceChunkIds,
-      vecLiteral,
-    );
+    await this.audit(organizationId, eleve.id, input.question, gen.text, 'RAG_LIVE', sourceChunkIds, gen.model, gen.inputTokens, gen.outputTokens, cost);
+    await this.storeCache(organizationId, eleve.niveau, input.question, gen.text, sourceChunkIds, vecLiteral);
 
-    // Mise à jour BKT sur RAG_LIVE : l'élève pose la question = il cherche à apprendre
-    const bktUpdate = await this.maybeUpdateBkt(
-      organizationId,
-      eleve.id,
-      input.skillCode,
-      eleve.niveau,
-      true, // RAG_LIVE = l'élève est en mode apprentissage actif
-    );
+    const bktUpdate = await this.maybeUpdateBkt(organizationId, eleve.id, input.skillCode, matiere, true);
 
-    return {
-      reponse: gen.text,
-      source: 'RAG_LIVE',
-      sourceChunkIds,
-      complexite,
-      bktUpdate,
-    };
+    // Trace L1 + refresh L2 (non bloquants)
+    this.memoryService
+      .appendTrace({ organizationId, eleveId: eleve.id, surface, question: input.question, reponse: gen.text, skillCode: input.skillCode, mastered: (bktUpdate?.probMastery ?? 0) >= 0.9, difficulty: 'MEDIUM' })
+      .catch(() => undefined);
+
+    return { reponse: gen.text, source: 'RAG_LIVE', sourceChunkIds, complexite, bktUpdate };
   }
 
   /**

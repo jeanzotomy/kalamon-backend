@@ -1,10 +1,9 @@
 import { Module } from '@nestjs/common';
-import { KalamonModule } from '../kalamon/kalamon.module';
 import { HintService } from './hint.service';
+import { AiProviderService } from '../kalamon/ai-provider.service';
 
 @Module({
-  imports: [KalamonModule],
-  providers: [HintService],
+  providers: [HintService, AiProviderService],
   exports: [HintService],
 })
 export class HintModule {}
