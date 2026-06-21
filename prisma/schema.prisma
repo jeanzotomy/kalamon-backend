@@ -1,0 +1,448 @@
+// ============================================================
+// KALAMON — schéma Prisma
+// PostgreSQL + pgvector (relationnel + RAG dans UNE seule base).
+// Pas de Cosmos DB : même moteur dev (Supabase) et prod (Azure PG).
+// ============================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+// ---------- Multi-tenant ----------
+// Une organisation = une école / un réseau. Isolation par organizationId.
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  country   String   @default("GN") // Guinée d'abord
+  createdAt DateTime @default(now())
+  deletedAt DateTime?
+
+  users         User[]
+  eleves        Eleve[]
+  lessons       Lesson[]
+  quizzes       Quiz[]
+  payments      Payment[]
+  subscriptions Subscription[]
+
+  @@map("organizations")
+}
+
+enum Role {
+  ELEVE
+  PARENT
+  ENSEIGNANT
+  DIRECTEUR
+  ADMIN
+}
+
+model User {
+  id             String   @id @default(uuid())
+  organizationId String
+  email          String
+  passwordHash   String
+  fullName       String
+  role           Role
+  // Canal parent : permet WhatsApp/SMS sans app
+  phone          String?
+  // Pays (ISO 3166-1 alpha-2) — app panafricaine, détecté à l'inscription
+  country        String   @default("GN")
+  createdAt      DateTime @default(now())
+  deletedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  eleveProfile Eleve?       @relation("EleveUser")
+  parentLinks  ParentEleve[] @relation("ParentUser")
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@map("users")
+}
+
+// ---------- Domaine élève ----------
+model Eleve {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String   @unique
+  niveau         String   // ex: "CM2", "6e"
+  // Pays de l'élève — pilote le programme localisé (histoire/géo du pays)
+  country        String   @default("GN")
+  createdAt      DateTime @default(now())
+  deletedAt      DateTime?
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  user         User          @relation("EleveUser", fields: [userId], references: [id])
+  parents      ParentEleve[]
+  progress     Progress[]
+  interactions AiInteraction[]
+
+  @@index([organizationId])
+  @@map("eleves")
+}
+
+model ParentEleve {
+  id       String @id @default(uuid())
+  parentId String
+  eleveId  String
+
+  parent User  @relation("ParentUser", fields: [parentId], references: [id])
+  eleve  Eleve @relation(fields: [eleveId], references: [id])
+
+  @@unique([parentId, eleveId])
+  @@map("parent_eleve")
+}
+
+// ---------- Curriculum + RAG ----------
+model Lesson {
+  id             String   @id @default(uuid())
+  organizationId String
+  matiere        String   // ex: "Mathématiques"
+  niveau         String
+  titre          String
+  contenu        String   @db.Text
+  createdAt      DateTime @default(now())
+  deletedAt      DateTime?
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  chunks       CurriculumChunk[]
+  quizzes      Quiz[]
+
+  @@index([organizationId, niveau, matiere])
+  @@map("lessons")
+}
+
+// Chunk de curriculum avec son embedding (pgvector).
+// L'index HNSW se crée via migration SQL brute (voir README).
+model CurriculumChunk {
+  id        String  @id @default(uuid())
+  lessonId  String
+  contenu   String  @db.Text
+  // dimension = EMBEDDING_DIM (1536 par défaut). Ajuster si autre modèle.
+  embedding Unsupported("vector(1536)")?
+  createdAt DateTime @default(now())
+
+  lesson Lesson @relation(fields: [lessonId], references: [id])
+
+  @@index([lessonId])
+  @@map("curriculum_chunks")
+}
+
+// Réponses pré-calculées / cache sémantique (coût IA ~0).
+model SemanticCacheEntry {
+  id             String  @id @default(uuid())
+  organizationId String
+  niveau         String
+  question       String  @db.Text
+  reponse        String  @db.Text
+  // sources curriculum (ids de chunks) pour la traçabilité AI Act
+  sourceChunkIds String[]
+  embedding      Unsupported("vector(1536)")?
+  hits           Int     @default(0)
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, niveau])
+  @@map("semantic_cache")
+}
+
+// ---------- Quiz ----------
+model Quiz {
+  id             String   @id @default(uuid())
+  organizationId String
+  lessonId       String?
+  niveau         String
+  titre          String
+  createdAt      DateTime @default(now())
+  deletedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  lesson       Lesson?      @relation(fields: [lessonId], references: [id])
+  questions    Question[]
+
+  @@index([organizationId, niveau])
+  @@map("quizzes")
+}
+
+model Question {
+  id        String   @id @default(uuid())
+  quizId    String
+  enonce    String   @db.Text
+  options   String[] // choix
+  bonneRep  Int      // index de la bonne réponse
+  explication String @db.Text
+
+  quiz Quiz @relation(fields: [quizId], references: [id])
+
+  @@index([quizId])
+  @@map("questions")
+}
+
+// ---------- Progression ----------
+model Progress {
+  id        String   @id @default(uuid())
+  eleveId   String
+  matiere   String
+  score     Int      @default(0)
+  points    Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  eleve Eleve @relation(fields: [eleveId], references: [id])
+
+  @@unique([eleveId, matiere])
+  @@map("progress")
+}
+
+// ---------- Paiements mobile money (CinetPay & co.) ----------
+// Montants stockés dans la plus petite unité de la devise.
+// GNF/XOF/XAF : exponent 0 (pas de centimes) → montant = valeur réelle.
+model Payment {
+  id             String    @id @default(uuid())
+  organizationId String
+  userId         String? // payeur (parent), facultatif
+  eleveId        String? // élève bénéficiaire, facultatif
+  orderId        String    @unique // notre référence idempotente
+  transactionId  String? // identifiant renvoyé par le provider
+  provider       String    @default("cinetpay")
+  purpose        String    @default("premium_monthly") // motif: abonnement, contenu...
+  amount         Int // dans la plus petite unité (GNF = valeur réelle)
+  currency       String    @default("GNF")
+  phone          String? // E.164 +224...
+  status         String    @default("PENDING") // PENDING | SUCCESS | FAILED | EXPIRED | CANCELLED
+  redirectUrl    String? // URL de paiement hébergée par le provider
+  metadata       Json? // payload brut du provider
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, status])
+  @@index([transactionId])
+  @@map("payments")
+}
+
+// ---------- Abonnements (freemium premium) ----------
+// Débloqué après paiement confirmé. L'accès est "actif" si
+// status = ACTIVE ET expiresAt > maintenant (calcul dynamique).
+model Subscription {
+  id             String   @id @default(uuid())
+  organizationId String
+  eleveId        String? // bénéficiaire (null = portée organisation)
+  plan           String   @default("premium")
+  status         String   @default("ACTIVE") // ACTIVE | CANCELLED
+  startedAt      DateTime @default(now())
+  expiresAt      DateTime
+  lastPaymentId  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, eleveId, plan])
+  @@map("subscriptions")
+}
+
+// ---------- Gamification & progression ----------
+model QuizAttempt {
+  id        String   @id @default(uuid())
+  organizationId String
+  eleveId   String
+  quizId    String
+  score     Int // bonnes réponses
+  total     Int
+  points    Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, eleveId])
+  @@map("quiz_attempts")
+}
+
+model Badge {
+  id          String   @id @default(uuid())
+  code        String   @unique // ex: "champion_lecture"
+  nom         String
+  description String
+  createdAt   DateTime @default(now())
+
+  eleveBadges EleveBadge[]
+
+  @@map("badges")
+}
+
+model EleveBadge {
+  id        String   @id @default(uuid())
+  eleveId   String
+  badgeId   String
+  obtainedAt DateTime @default(now())
+
+  badge Badge @relation(fields: [badgeId], references: [id])
+
+  @@unique([eleveId, badgeId])
+  @@index([eleveId])
+  @@map("eleve_badges")
+}
+
+model Notification {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  type           String   @default("info") // info | progres | difficulte | rappel
+  titre          String
+  message        String
+  lu             Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, userId, lu])
+  @@map("notifications")
+}
+
+// ---------- P0 : Bayesian Knowledge Tracing (BKT) ----------
+// 4 paramètres par compétence et par élève (OATutor/Berkeley pattern).
+model SkillMastery {
+  id             String    @id @default(uuid())
+  organizationId String
+  eleveId        String
+  skill          String    // ex: "math:fractions", "francais:conjugaison_passe"
+  matiere        String
+  // BKT core parameters
+  probMastery    Float     @default(0.1)  // P(Know) — estimation courante de maîtrise
+  probTransit    Float     @default(0.3)  // P(T)    — proba d'apprendre à chaque réponse
+  probSlip       Float     @default(0.1)  // P(S)    — proba d'erreur malgré la maîtrise
+  probGuess      Float     @default(0.2)  // P(G)    — proba de bonne réponse par hasard
+  attempts       Int       @default(0)
+  correctCount   Int       @default(0)
+  lastPracticed  DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([eleveId, skill])
+  @@index([organizationId, eleveId])
+  @@map("skill_mastery")
+}
+
+// ---------- P0 : Mémoire élève 3 couches (DeepTutor L1/L2/L3 pattern) ----------
+
+// L1 : traces brutes par session (append-only)
+model MemoryTrace {
+  id             String   @id @default(uuid())
+  organizationId String
+  eleveId        String
+  surface        String   // ex: "math:fractions", "francais:lecture"
+  question       String   @db.Text
+  reponse        String   @db.Text
+  skillCode      String?  // lien BKT optionnel
+  mastered       Boolean  @default(false)
+  difficulty     String   @default("MEDIUM") // LOW | MEDIUM | HIGH
+  createdAt      DateTime @default(now())
+
+  @@index([eleveId, surface])
+  @@index([organizationId, eleveId])
+  @@map("memory_traces")
+}
+
+// L2 : résumé par matière/surface (mise à jour périodique)
+model MemorySurface {
+  id             String   @id @default(uuid())
+  organizationId String
+  eleveId        String
+  surface        String   // ex: "math:fractions"
+  summary        String   @db.Text  // résumé LLM de la progression sur cette surface
+  traceCount     Int      @default(0)
+  lastUpdated    DateTime @default(now())
+
+  @@unique([eleveId, surface])
+  @@index([organizationId, eleveId])
+  @@map("memory_surfaces")
+}
+
+// L3 : profil synthétique cross-sessions (génération hebdomadaire)
+model StudentProfile {
+  id           String   @id @default(uuid())
+  organizationId String
+  eleveId      String   @unique
+  profileMd    String   @db.Text  // profil global (forces, faiblesses)
+  recentMd     String   @db.Text  // activité des 7 derniers jours
+  strengthsMd  String   @db.Text  // compétences maîtrisées
+  weaknessesMd String   @db.Text  // lacunes identifiées
+  lastSynthesis DateTime @default(now())
+
+  @@index([organizationId])
+  @@map("student_profiles")
+}
+
+// ---------- P1 : Knowledge Graph — suivi prérequis (LOOM pattern) ----------
+model Concept {
+  id             String   @id @default(uuid())
+  organizationId String
+  matiere        String
+  niveau         String
+  code           String   // ex: "fractions", "tables_multiplication"
+  label          String   // ex: "Fractions simples"
+  description    String?  @db.Text
+
+  prerequisites ConceptPrerequisite[] @relation("ConceptDependsOn")
+  dependents    ConceptPrerequisite[] @relation("ConceptIsPrereqFor")
+
+  @@unique([organizationId, matiere, code])
+  @@index([organizationId, matiere, niveau])
+  @@map("concepts")
+}
+
+model ConceptPrerequisite {
+  id             String @id @default(uuid())
+  conceptId      String  // concept qui nécessite le prérequis
+  prerequisiteId String  // prérequis à maîtriser d'abord
+
+  concept      Concept @relation("ConceptDependsOn",   fields: [conceptId],      references: [id])
+  prerequisite Concept @relation("ConceptIsPrereqFor", fields: [prerequisiteId], references: [id])
+
+  @@unique([conceptId, prerequisiteId])
+  @@map("concept_prerequisites")
+}
+
+// ---------- P1 : Jobs d'ingestion PDF/DOCX ----------
+model IngestionJob {
+  id             String   @id @default(uuid())
+  organizationId String
+  fileName       String
+  fileUrl        String
+  niveau         String
+  matiere        String
+  status         String   @default("PENDING") // PENDING | PROCESSING | DONE | FAILED
+  chunksCreated  Int      @default(0)
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@map("ingestion_jobs")
+}
+
+// ---------- Journal d'audit IA (AI Act HAUT RISQUE) ----------
+// Toute interaction IA est tracée : entrée, sources, sortie, coût, horodatage.
+model AiInteraction {
+  id             String   @id @default(uuid())
+  organizationId String
+  eleveId        String
+  question       String   @db.Text
+  reponse        String   @db.Text
+  // d'où vient la réponse : CACHE | PRECALCUL | RAG_LIVE
+  source         String
+  sourceChunkIds String[]
+  modelUsed      String?
+  inputTokens    Int      @default(0)
+  outputTokens   Int      @default(0)
+  costUsd        Float    @default(0)
+  createdAt      DateTime @default(now())
+
+  eleve Eleve @relation(fields: [eleveId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([eleveId, createdAt])
+  @@map("ai_interactions")
+}

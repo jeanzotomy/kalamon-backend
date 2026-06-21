@@ -1,0 +1,63 @@
+## NestJS Backend Builder — Handoff
+
+- Module : ConceptModule + HintModule
+- Port : (service Kalamon — port configuré via env.PORT)
+- Routes generees :
+  - GET  /concepts/next         — prochain concept recommandé (eleveId, matiere, niveau)
+  - GET  /concepts/unmastered   — prérequis non maîtrisés (eleveId, matiere, conceptCode)
+  - GET  /concepts              — liste paginée par matière/niveau
+  - POST /concepts              — créer un concept
+  - POST /concepts/prereq       — ajouter une arête prérequis
+- Schema Prisma modifie : non — modèles Concept, ConceptPrerequisite, SkillMastery déjà existants
+- Variables env ajoutees : aucune
+- Decisions prises :
+  - BFS implémenté en mémoire après chargement bulk des arêtes (évite N+1)
+  - Convention skill key = "<matiere>:<code>" alignée sur le schéma Prisma existant
+  - Seuil de maîtrise MASTERY_THRESHOLD = 0.9 (constante nommée, pas magic number)
+  - HintService délègue à AiProviderService.generateGrounded() — ancrage curriculum garanti
+  - KalamonModule.exports déjà avait AiProviderService exporté — pas de modification requise
+  - AppModule mis à jour : imports ConceptModule + HintModule
+  - Pagination : max 50 items, retourne items/total/page/limit/totalPages
+  - Route order Fastify respectée : /concepts/next et /concepts/unmastered AVANT tout :id
+- Fichiers crees :
+  - S:\Claude\kalamon-backend\src\concept\concept.service.ts
+  - S:\Claude\kalamon-backend\src\concept\concept.controller.ts
+  - S:\Claude\kalamon-backend\src\concept\concept.module.ts
+  - S:\Claude\kalamon-backend\src\hint\hint.service.ts
+  - S:\Claude\kalamon-backend\src\hint\hint.module.ts
+- Fichiers modifies :
+  - S:\Claude\kalamon-backend\src\app.module.ts (ajout ConceptModule + HintModule)
+
+---
+
+## Session 2026-06-21 — IngestionModule (P1) + VoiceModule (P2)
+
+- Routes ajoutees :
+  - POST /ingestion             — lancer ingestion PDF (fire-and-forget, retourne { jobId })
+  - GET  /ingestion             — lister les jobs pagines (query: ?page=)
+  - GET  /ingestion/:jobId      — statut d'un job
+  - WS   /voice (socket.io)    — events: audio_chunk, voice_response, session_start, session_ready
+- Schema Prisma modifie : non — IngestionJob et CurriculumChunk existaient deja
+- Variables env ajoutees : aucune (pdf-parse et socket.io sont des libs, pas d'env)
+- Decisions prises :
+  - pdf-parse v1.1.1 uniquement (v2.x ESM pur = crash NestJS CJS) — require() statique top-level
+  - runIngestion() fire-and-forget : void this.runIngestion() dans startIngestion, jamais await dans le controller
+  - CurriculumChunk.embedding pose via $executeRaw (type vector(1536) non gere nativement par Prisma)
+  - Lesson de rattachement creee si absente (niveau+matiere+orgId) — idempotente
+  - VoiceGateway : stub complet avec logs structures, OnGatewayConnection/Disconnect, commentaires P2
+  - KalamonModule.exports AiProviderService — IngestionModule l'importe directement
+  - PrismaModule et StorageModule sont @Global() — pas d'import dans IngestionModule
+- Packages ajoutes au package.json :
+  - pdf-parse 1.1.1
+  - @nestjs/websockets ^10.4.15
+  - @nestjs/platform-socket.io ^10.4.15
+  - socket.io ^4.8.1
+- Fichiers crees :
+  - S:\Claude\kalamon-backend\src\ingestion\pdf-ingestion.service.ts
+  - S:\Claude\kalamon-backend\src\ingestion\ingestion.controller.ts
+  - S:\Claude\kalamon-backend\src\ingestion\ingestion.module.ts
+  - S:\Claude\kalamon-backend\src\voice\voice.gateway.ts
+  - S:\Claude\kalamon-backend\src\voice\voice.module.ts
+- Fichiers modifies :
+  - S:\Claude\kalamon-backend\src\app.module.ts (ajout IngestionModule + VoiceModule)
+  - S:\Claude\kalamon-backend\package.json (ajout 4 packages)
