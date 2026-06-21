@@ -3,3 +3,6 @@ dist/
 .env
 .env.local
 *.env.local
+
+# Bicep compiled ARM output (artefact — on déploie depuis le .bicep)
+infra/*.json
