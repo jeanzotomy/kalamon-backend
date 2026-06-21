@@ -1,0 +1,996 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "2620184582094764488"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "canadacentral",
+      "metadata": {
+        "description": "Région Azure cible"
+      }
+    },
+    "rgName": {
+      "type": "string",
+      "defaultValue": "kalamon-prod",
+      "metadata": {
+        "description": "Nom du resource group à créer"
+      }
+    },
+    "environment": {
+      "type": "string",
+      "defaultValue": "production",
+      "metadata": {
+        "description": "Tag environnement"
+      }
+    },
+    "project": {
+      "type": "string",
+      "defaultValue": "kalamon",
+      "metadata": {
+        "description": "Tag projet"
+      }
+    },
+    "team": {
+      "type": "string",
+      "defaultValue": "kalamon-backend",
+      "metadata": {
+        "description": "Tag d'équipe"
+      }
+    },
+    "pgAdminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Mot de passe administrateur PostgreSQL Flexible Server"
+      }
+    },
+    "jwtSecret": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Clé secrète JWT (minimum 32 caractères)"
+      }
+    },
+    "anthropicApiKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Clé API Anthropic"
+      }
+    },
+    "openAiApiKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Clé API OpenAI (embeddings)"
+      }
+    },
+    "cinetpayApiKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Clé API CinetPay"
+      }
+    },
+    "cinetpaySiteId": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Site ID CinetPay"
+      }
+    },
+    "cinetpaySecretKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Clé secrète CinetPay"
+      }
+    },
+    "r2AccessKeyId": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Cloudflare R2 Access Key ID"
+      }
+    },
+    "r2SecretAccessKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Cloudflare R2 Secret Access Key"
+      }
+    },
+    "imageTag": {
+      "type": "string",
+      "defaultValue": "latest",
+      "metadata": {
+        "description": "Tag image Docker à déployer"
+      }
+    },
+    "pgSku": {
+      "type": "string",
+      "defaultValue": "Standard_B1ms",
+      "allowedValues": [
+        "Standard_B1ms",
+        "Standard_B2s",
+        "Standard_D2s_v3"
+      ],
+      "metadata": {
+        "description": "SKU PostgreSQL Flexible Server (Standard_B1ms = burstable MVP)"
+      }
+    },
+    "pgSkuTier": {
+      "type": "string",
+      "defaultValue": "Burstable",
+      "allowedValues": [
+        "Burstable",
+        "GeneralPurpose"
+      ],
+      "metadata": {
+        "description": "Tier PostgreSQL correspondant au SKU"
+      }
+    },
+    "llmProvider": {
+      "type": "string",
+      "defaultValue": "anthropic",
+      "metadata": {
+        "description": "LLM provider (anthropic | azure-openai)"
+      }
+    },
+    "llmModel": {
+      "type": "string",
+      "defaultValue": "claude-haiku-4-5",
+      "metadata": {
+        "description": "Modèle LLM à utiliser"
+      }
+    },
+    "embeddingProvider": {
+      "type": "string",
+      "defaultValue": "openai",
+      "metadata": {
+        "description": "Provider d'embeddings (openai | azure-openai)"
+      }
+    },
+    "embeddingModel": {
+      "type": "string",
+      "defaultValue": "text-embedding-3-small",
+      "metadata": {
+        "description": "Modèle d'embeddings"
+      }
+    },
+    "embeddingDim": {
+      "type": "int",
+      "defaultValue": 1536,
+      "metadata": {
+        "description": "Dimensions du vecteur embedding"
+      }
+    },
+    "aiDailyBudgetPerStudent": {
+      "type": "int",
+      "defaultValue": 120,
+      "metadata": {
+        "description": "Budget IA journalier par élève (unité = tokens)"
+      }
+    },
+    "semanticCacheThreshold": {
+      "type": "string",
+      "defaultValue": "0.92",
+      "metadata": {
+        "description": "Seuil de similarité cache sémantique (0-1)"
+      }
+    },
+    "paymentProvider": {
+      "type": "string",
+      "defaultValue": "cinetpay",
+      "metadata": {
+        "description": "Provider de paiement"
+      }
+    },
+    "paymentCurrency": {
+      "type": "string",
+      "defaultValue": "GNF",
+      "metadata": {
+        "description": "Devise de paiement par défaut"
+      }
+    },
+    "paymentNotifyUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "URL publique webhook paiement (callback CinetPay)"
+      }
+    },
+    "paymentReturnUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "URL de retour paiement (page frontend)"
+      }
+    },
+    "pricePremiumMonthlyGnf": {
+      "type": "int",
+      "defaultValue": 20000,
+      "metadata": {
+        "description": "Prix premium mensuel GNF"
+      }
+    },
+    "pricePremiumMonthlyXof": {
+      "type": "int",
+      "defaultValue": 1000,
+      "metadata": {
+        "description": "Prix premium mensuel XOF"
+      }
+    },
+    "pricePremiumMonthlyXaf": {
+      "type": "int",
+      "defaultValue": 1000,
+      "metadata": {
+        "description": "Prix premium mensuel XAF"
+      }
+    },
+    "r2AccountId": {
+      "type": "string",
+      "metadata": {
+        "description": "Cloudflare R2 Account ID"
+      }
+    },
+    "r2Bucket": {
+      "type": "string",
+      "defaultValue": "kalamon",
+      "metadata": {
+        "description": "Nom du bucket R2"
+      }
+    },
+    "r2PublicBase": {
+      "type": "string",
+      "metadata": {
+        "description": "URL publique du bucket R2 (custom domain ou r2.dev)"
+      }
+    },
+    "pointsPerLesson": {
+      "type": "int",
+      "defaultValue": 10,
+      "metadata": {
+        "description": "Points attribués par leçon complétée"
+      }
+    },
+    "pointsPerQuizCorrect": {
+      "type": "int",
+      "defaultValue": 5,
+      "metadata": {
+        "description": "Points attribués par bonne réponse quiz"
+      }
+    },
+    "corsOrigins": {
+      "type": "string",
+      "metadata": {
+        "description": "Origines CORS autorisées (virgule-séparées)"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2023-07-01",
+      "name": "[parameters('rgName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "environment": "[parameters('environment')]",
+        "project": "[parameters('project')]",
+        "team": "[parameters('team')]",
+        "managedBy": "bicep"
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "kalamon-resources",
+      "resourceGroup": "[parameters('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "environment": {
+            "value": "[parameters('environment')]"
+          },
+          "project": {
+            "value": "[parameters('project')]"
+          },
+          "team": {
+            "value": "[parameters('team')]"
+          },
+          "imageTag": {
+            "value": "[parameters('imageTag')]"
+          },
+          "pgAdminPassword": {
+            "value": "[parameters('pgAdminPassword')]"
+          },
+          "pgSku": {
+            "value": "[parameters('pgSku')]"
+          },
+          "pgSkuTier": {
+            "value": "[parameters('pgSkuTier')]"
+          },
+          "jwtSecret": {
+            "value": "[parameters('jwtSecret')]"
+          },
+          "anthropicApiKey": {
+            "value": "[parameters('anthropicApiKey')]"
+          },
+          "openAiApiKey": {
+            "value": "[parameters('openAiApiKey')]"
+          },
+          "cinetpayApiKey": {
+            "value": "[parameters('cinetpayApiKey')]"
+          },
+          "cinetpaySiteId": {
+            "value": "[parameters('cinetpaySiteId')]"
+          },
+          "cinetpaySecretKey": {
+            "value": "[parameters('cinetpaySecretKey')]"
+          },
+          "r2AccessKeyId": {
+            "value": "[parameters('r2AccessKeyId')]"
+          },
+          "r2SecretAccessKey": {
+            "value": "[parameters('r2SecretAccessKey')]"
+          },
+          "llmProvider": {
+            "value": "[parameters('llmProvider')]"
+          },
+          "llmModel": {
+            "value": "[parameters('llmModel')]"
+          },
+          "embeddingProvider": {
+            "value": "[parameters('embeddingProvider')]"
+          },
+          "embeddingModel": {
+            "value": "[parameters('embeddingModel')]"
+          },
+          "embeddingDim": {
+            "value": "[parameters('embeddingDim')]"
+          },
+          "aiDailyBudgetPerStudent": {
+            "value": "[parameters('aiDailyBudgetPerStudent')]"
+          },
+          "semanticCacheThreshold": {
+            "value": "[parameters('semanticCacheThreshold')]"
+          },
+          "paymentProvider": {
+            "value": "[parameters('paymentProvider')]"
+          },
+          "paymentCurrency": {
+            "value": "[parameters('paymentCurrency')]"
+          },
+          "paymentNotifyUrl": {
+            "value": "[parameters('paymentNotifyUrl')]"
+          },
+          "paymentReturnUrl": {
+            "value": "[parameters('paymentReturnUrl')]"
+          },
+          "pricePremiumMonthlyGnf": {
+            "value": "[parameters('pricePremiumMonthlyGnf')]"
+          },
+          "pricePremiumMonthlyXof": {
+            "value": "[parameters('pricePremiumMonthlyXof')]"
+          },
+          "pricePremiumMonthlyXaf": {
+            "value": "[parameters('pricePremiumMonthlyXaf')]"
+          },
+          "r2AccountId": {
+            "value": "[parameters('r2AccountId')]"
+          },
+          "r2Bucket": {
+            "value": "[parameters('r2Bucket')]"
+          },
+          "r2PublicBase": {
+            "value": "[parameters('r2PublicBase')]"
+          },
+          "pointsPerLesson": {
+            "value": "[parameters('pointsPerLesson')]"
+          },
+          "pointsPerQuizCorrect": {
+            "value": "[parameters('pointsPerQuizCorrect')]"
+          },
+          "corsOrigins": {
+            "value": "[parameters('corsOrigins')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "11697129727819291351"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "environment": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            },
+            "team": {
+              "type": "string"
+            },
+            "imageTag": {
+              "type": "string"
+            },
+            "pgAdminPassword": {
+              "type": "securestring"
+            },
+            "pgSku": {
+              "type": "string"
+            },
+            "pgSkuTier": {
+              "type": "string"
+            },
+            "jwtSecret": {
+              "type": "securestring"
+            },
+            "anthropicApiKey": {
+              "type": "securestring"
+            },
+            "openAiApiKey": {
+              "type": "securestring"
+            },
+            "cinetpayApiKey": {
+              "type": "securestring"
+            },
+            "cinetpaySiteId": {
+              "type": "securestring"
+            },
+            "cinetpaySecretKey": {
+              "type": "securestring"
+            },
+            "r2AccessKeyId": {
+              "type": "securestring"
+            },
+            "r2SecretAccessKey": {
+              "type": "securestring"
+            },
+            "llmProvider": {
+              "type": "string"
+            },
+            "llmModel": {
+              "type": "string"
+            },
+            "embeddingProvider": {
+              "type": "string"
+            },
+            "embeddingModel": {
+              "type": "string"
+            },
+            "embeddingDim": {
+              "type": "int"
+            },
+            "aiDailyBudgetPerStudent": {
+              "type": "int"
+            },
+            "semanticCacheThreshold": {
+              "type": "string"
+            },
+            "paymentProvider": {
+              "type": "string"
+            },
+            "paymentCurrency": {
+              "type": "string"
+            },
+            "paymentNotifyUrl": {
+              "type": "string"
+            },
+            "paymentReturnUrl": {
+              "type": "string"
+            },
+            "pricePremiumMonthlyGnf": {
+              "type": "int"
+            },
+            "pricePremiumMonthlyXof": {
+              "type": "int"
+            },
+            "pricePremiumMonthlyXaf": {
+              "type": "int"
+            },
+            "r2AccountId": {
+              "type": "string"
+            },
+            "r2Bucket": {
+              "type": "string"
+            },
+            "r2PublicBase": {
+              "type": "string"
+            },
+            "pointsPerLesson": {
+              "type": "int"
+            },
+            "pointsPerQuizCorrect": {
+              "type": "int"
+            },
+            "corsOrigins": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "acrName": "acrkalamon",
+            "psqlName": "psql-kalamon",
+            "psqlAdminLogin": "kalamonadmin",
+            "psqlDbName": "kalamon",
+            "logWorkspaceName": "log-kalamon",
+            "caeEnvironmentName": "cae-kalamon",
+            "containerAppName": "ca-kalamon-api",
+            "acrLoginServer": "[format('{0}.azurecr.io', variables('acrName'))]",
+            "containerImage": "[format('{0}/kalamon-backend:{1}', variables('acrLoginServer'), parameters('imageTag'))]",
+            "commonTags": {
+              "environment": "[parameters('environment')]",
+              "project": "[parameters('project')]",
+              "team": "[parameters('team')]",
+              "managedBy": "bicep"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2023-09-01",
+              "name": "[variables('logWorkspaceName')]",
+              "location": "[parameters('location')]",
+              "tags": "[variables('commonTags')]",
+              "properties": {
+                "sku": {
+                  "name": "PerGB2018"
+                },
+                "retentionInDays": 30,
+                "features": {
+                  "enableLogAccessUsingOnlyResourcePermissions": true
+                }
+              }
+            },
+            {
+              "type": "Microsoft.ContainerRegistry/registries",
+              "apiVersion": "2023-11-01-preview",
+              "name": "[variables('acrName')]",
+              "location": "[parameters('location')]",
+              "tags": "[variables('commonTags')]",
+              "sku": {
+                "name": "Basic"
+              },
+              "properties": {
+                "adminUserEnabled": true,
+                "publicNetworkAccess": "Enabled",
+                "zoneRedundancy": "Disabled",
+                "policies": {
+                  "retentionPolicy": {
+                    "days": 30,
+                    "status": "enabled"
+                  }
+                }
+              }
+            },
+            {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+              "apiVersion": "2023-12-01-preview",
+              "name": "[variables('psqlName')]",
+              "location": "[parameters('location')]",
+              "tags": "[variables('commonTags')]",
+              "sku": {
+                "name": "[parameters('pgSku')]",
+                "tier": "[parameters('pgSkuTier')]"
+              },
+              "properties": {
+                "administratorLogin": "[variables('psqlAdminLogin')]",
+                "administratorLoginPassword": "[parameters('pgAdminPassword')]",
+                "version": "16",
+                "storage": {
+                  "storageSizeGB": 32,
+                  "autoGrow": "Disabled"
+                },
+                "backup": {
+                  "backupRetentionDays": 7,
+                  "geoRedundantBackup": "Disabled"
+                },
+                "highAvailability": {
+                  "mode": "Disabled"
+                },
+                "authConfig": {
+                  "activeDirectoryAuth": "Disabled",
+                  "passwordAuth": "Enabled"
+                },
+                "network": {
+                  "publicNetworkAccess": "Enabled"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers/configurations",
+              "apiVersion": "2023-12-01-preview",
+              "name": "[format('{0}/{1}', variables('psqlName'), 'azure.extensions')]",
+              "properties": {
+                "value": "VECTOR",
+                "source": "user-override"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('psqlName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
+              "apiVersion": "2023-12-01-preview",
+              "name": "[format('{0}/{1}', variables('psqlName'), 'AllowAllAzureServices')]",
+              "properties": {
+                "startIpAddress": "0.0.0.0",
+                "endIpAddress": "0.0.0.0"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('psqlName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+              "apiVersion": "2023-12-01-preview",
+              "name": "[format('{0}/{1}', variables('psqlName'), variables('psqlDbName'))]",
+              "properties": {
+                "charset": "UTF8",
+                "collation": "en_US.utf8"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('psqlName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('caeEnvironmentName')]",
+              "location": "[parameters('location')]",
+              "tags": "[variables('commonTags')]",
+              "properties": {
+                "appLogsConfiguration": {
+                  "destination": "log-analytics",
+                  "logAnalyticsConfiguration": {
+                    "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', variables('logWorkspaceName')), '2023-09-01').customerId]",
+                    "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', variables('logWorkspaceName')), '2023-09-01').primarySharedKey]"
+                  }
+                },
+                "zoneRedundant": false
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logWorkspaceName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('containerAppName')]",
+              "location": "[parameters('location')]",
+              "tags": "[variables('commonTags')]",
+              "properties": {
+                "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('caeEnvironmentName'))]",
+                "configuration": {
+                  "secrets": [
+                    {
+                      "name": "acr-password",
+                      "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-11-01-preview').passwords[0].value]"
+                    },
+                    {
+                      "name": "database-url",
+                      "value": "[format('postgresql://{0}:{1}@{2}:5432/{3}?sslmode=require&schema=public', variables('psqlAdminLogin'), parameters('pgAdminPassword'), reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('psqlName')), '2023-12-01-preview').fullyQualifiedDomainName, variables('psqlDbName'))]"
+                    },
+                    {
+                      "name": "jwt-secret",
+                      "value": "[parameters('jwtSecret')]"
+                    },
+                    {
+                      "name": "anthropic-api-key",
+                      "value": "[parameters('anthropicApiKey')]"
+                    },
+                    {
+                      "name": "openai-api-key",
+                      "value": "[parameters('openAiApiKey')]"
+                    },
+                    {
+                      "name": "cinetpay-api-key",
+                      "value": "[parameters('cinetpayApiKey')]"
+                    },
+                    {
+                      "name": "cinetpay-site-id",
+                      "value": "[parameters('cinetpaySiteId')]"
+                    },
+                    {
+                      "name": "cinetpay-secret-key",
+                      "value": "[parameters('cinetpaySecretKey')]"
+                    },
+                    {
+                      "name": "r2-access-key-id",
+                      "value": "[parameters('r2AccessKeyId')]"
+                    },
+                    {
+                      "name": "r2-secret-access-key",
+                      "value": "[parameters('r2SecretAccessKey')]"
+                    }
+                  ],
+                  "registries": [
+                    {
+                      "server": "[variables('acrLoginServer')]",
+                      "username": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-11-01-preview').username]",
+                      "passwordSecretRef": "acr-password"
+                    }
+                  ],
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 3000,
+                    "transport": "auto",
+                    "allowInsecure": false,
+                    "traffic": [
+                      {
+                        "latestRevision": true,
+                        "weight": 100
+                      }
+                    ]
+                  },
+                  "activeRevisionsMode": "Single"
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "kalamon-api",
+                      "image": "[variables('containerImage')]",
+                      "resources": {
+                        "cpu": "[json('0.5')]",
+                        "memory": "1.0Gi"
+                      },
+                      "env": [
+                        {
+                          "name": "NODE_ENV",
+                          "value": "production"
+                        },
+                        {
+                          "name": "PORT",
+                          "value": "3000"
+                        },
+                        {
+                          "name": "CORS_ORIGINS",
+                          "value": "[parameters('corsOrigins')]"
+                        },
+                        {
+                          "name": "LLM_PROVIDER",
+                          "value": "[parameters('llmProvider')]"
+                        },
+                        {
+                          "name": "LLM_MODEL",
+                          "value": "[parameters('llmModel')]"
+                        },
+                        {
+                          "name": "EMBEDDING_PROVIDER",
+                          "value": "[parameters('embeddingProvider')]"
+                        },
+                        {
+                          "name": "EMBEDDING_MODEL",
+                          "value": "[parameters('embeddingModel')]"
+                        },
+                        {
+                          "name": "EMBEDDING_DIM",
+                          "value": "[string(parameters('embeddingDim'))]"
+                        },
+                        {
+                          "name": "AI_DAILY_BUDGET_PER_STUDENT",
+                          "value": "[string(parameters('aiDailyBudgetPerStudent'))]"
+                        },
+                        {
+                          "name": "SEMANTIC_CACHE_THRESHOLD",
+                          "value": "[parameters('semanticCacheThreshold')]"
+                        },
+                        {
+                          "name": "PAYMENT_PROVIDER",
+                          "value": "[parameters('paymentProvider')]"
+                        },
+                        {
+                          "name": "PAYMENT_CURRENCY",
+                          "value": "[parameters('paymentCurrency')]"
+                        },
+                        {
+                          "name": "PAYMENT_NOTIFY_URL",
+                          "value": "[parameters('paymentNotifyUrl')]"
+                        },
+                        {
+                          "name": "PAYMENT_RETURN_URL",
+                          "value": "[parameters('paymentReturnUrl')]"
+                        },
+                        {
+                          "name": "PRICE_PREMIUM_MONTHLY_GNF",
+                          "value": "[string(parameters('pricePremiumMonthlyGnf'))]"
+                        },
+                        {
+                          "name": "PRICE_PREMIUM_MONTHLY_XOF",
+                          "value": "[string(parameters('pricePremiumMonthlyXof'))]"
+                        },
+                        {
+                          "name": "PRICE_PREMIUM_MONTHLY_XAF",
+                          "value": "[string(parameters('pricePremiumMonthlyXaf'))]"
+                        },
+                        {
+                          "name": "R2_ACCOUNT_ID",
+                          "value": "[parameters('r2AccountId')]"
+                        },
+                        {
+                          "name": "R2_BUCKET",
+                          "value": "[parameters('r2Bucket')]"
+                        },
+                        {
+                          "name": "R2_PUBLIC_BASE",
+                          "value": "[parameters('r2PublicBase')]"
+                        },
+                        {
+                          "name": "POINTS_PER_LESSON",
+                          "value": "[string(parameters('pointsPerLesson'))]"
+                        },
+                        {
+                          "name": "POINTS_PER_QUIZ_CORRECT",
+                          "value": "[string(parameters('pointsPerQuizCorrect'))]"
+                        },
+                        {
+                          "name": "COOKIE_SECURE",
+                          "value": "true"
+                        },
+                        {
+                          "name": "COOKIE_NAME",
+                          "value": "kalamon_token"
+                        },
+                        {
+                          "name": "JWT_EXPIRES_IN",
+                          "value": "7d"
+                        },
+                        {
+                          "name": "DATABASE_URL",
+                          "secretRef": "database-url"
+                        },
+                        {
+                          "name": "JWT_SECRET",
+                          "secretRef": "jwt-secret"
+                        },
+                        {
+                          "name": "ANTHROPIC_API_KEY",
+                          "secretRef": "anthropic-api-key"
+                        },
+                        {
+                          "name": "OPENAI_API_KEY",
+                          "secretRef": "openai-api-key"
+                        },
+                        {
+                          "name": "CINETPAY_API_KEY",
+                          "secretRef": "cinetpay-api-key"
+                        },
+                        {
+                          "name": "CINETPAY_SITE_ID",
+                          "secretRef": "cinetpay-site-id"
+                        },
+                        {
+                          "name": "CINETPAY_SECRET_KEY",
+                          "secretRef": "cinetpay-secret-key"
+                        },
+                        {
+                          "name": "R2_ACCESS_KEY_ID",
+                          "secretRef": "r2-access-key-id"
+                        },
+                        {
+                          "name": "R2_SECRET_ACCESS_KEY",
+                          "secretRef": "r2-secret-access-key"
+                        }
+                      ],
+                      "probes": [
+                        {
+                          "type": "Liveness",
+                          "httpGet": {
+                            "path": "/health",
+                            "port": 3000,
+                            "scheme": "HTTP"
+                          },
+                          "initialDelaySeconds": 30,
+                          "periodSeconds": 30,
+                          "failureThreshold": 3,
+                          "timeoutSeconds": 5
+                        },
+                        {
+                          "type": "Readiness",
+                          "httpGet": {
+                            "path": "/health",
+                            "port": 3000,
+                            "scheme": "HTTP"
+                          },
+                          "initialDelaySeconds": 15,
+                          "periodSeconds": 10,
+                          "failureThreshold": 3,
+                          "timeoutSeconds": 5
+                        },
+                        {
+                          "type": "Startup",
+                          "httpGet": {
+                            "path": "/health",
+                            "port": 3000,
+                            "scheme": "HTTP"
+                          },
+                          "initialDelaySeconds": 10,
+                          "periodSeconds": 10,
+                          "failureThreshold": 12,
+                          "timeoutSeconds": 5
+                        }
+                      ]
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 3,
+                    "rules": [
+                      {
+                        "name": "http-scaling",
+                        "http": {
+                          "metadata": {
+                            "concurrentRequests": "20"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]",
+                "[resourceId('Microsoft.App/managedEnvironments', variables('caeEnvironmentName'))]",
+                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers/configurations', variables('psqlName'), 'azure.extensions')]",
+                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers/firewallRules', variables('psqlName'), 'AllowAllAzureServices')]",
+                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('psqlName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "containerAppFqdn": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01').configuration.ingress.fqdn]"
+            },
+            "acrLoginServer": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-11-01-preview').loginServer]"
+            },
+            "postgresqlFqdn": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('psqlName')), '2023-12-01-preview').fullyQualifiedDomainName]"
+            },
+            "logWorkspaceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logWorkspaceName'))]"
+            },
+            "caeEnvironmentId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.App/managedEnvironments', variables('caeEnvironmentName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('rgName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "resourceGroupName": {
+      "type": "string",
+      "value": "[parameters('rgName')]"
+    },
+    "containerAppFqdn": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('rgName')), 'Microsoft.Resources/deployments', 'kalamon-resources'), '2025-04-01').outputs.containerAppFqdn.value]"
+    },
+    "acrLoginServer": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('rgName')), 'Microsoft.Resources/deployments', 'kalamon-resources'), '2025-04-01').outputs.acrLoginServer.value]"
+    },
+    "postgresqlFqdn": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('rgName')), 'Microsoft.Resources/deployments', 'kalamon-resources'), '2025-04-01').outputs.postgresqlFqdn.value]"
+    }
+  }
+}
